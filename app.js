@@ -9,8 +9,9 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
+
 // Initialize SQLite Database
-const db = new sqlite3.Database('myDatabase.db', (err) => { // Create Database
+const db = new sqlite3.Database('myDatabase.db', (err) => {
     if (err) {
         console.error('Failed to connect to SQLite:', err.message);
         process.exit(1);
@@ -20,11 +21,11 @@ const db = new sqlite3.Database('myDatabase.db', (err) => { // Create Database
 
 const initializeTables = () => {
     db.serialize(() => {
-        // Check and create userDetails table
-        db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='userDetails';", (err, row) => {
+        // Check and create users table
+        db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='users';", (err, row) => {
             if (!row) {
                 db.run(
-                    `CREATE TABLE userDetails (
+                    `CREATE TABLE users (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         username TEXT NOT NULL,
                         email TEXT UNIQUE NOT NULL,
@@ -32,38 +33,39 @@ const initializeTables = () => {
                     );`,
                     (err) => {
                         if (err) {
-                            console.error('Error creating userDetails table:', err.message); // Any error is occur during creating a table
+                            console.error('Error creating users table:', err.message);
                         } else {
-                            console.log('userDetails table created.'); // When table is successfully created
+                            console.log('users table created.');
                         }
                     }
                 );
             } else {
-                console.log('userDetails table already exists.'); // If userDetails table is doesn't exists
+                console.log('users table already exists.');
             }
         });
 
-        // Check and create taskList table
-        db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='taskList';", (err, row) => {
+        // Check and create tasks table (with description column)
+        db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='tasks';", (err, row) => {
             if (!row) {
                 db.run(
-                    `CREATE TABLE taskList (
+                    `CREATE TABLE tasks (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        userId INTEGER NOT NULL,
-                        task TEXT NOT NULL,
+                        user_id INTEGER NOT NULL,
+                        title TEXT NOT NULL,
+                        description TEXT,  -- Added description column
                         status TEXT NOT NULL,
-                        FOREIGN KEY (userId) REFERENCES userDetails(id)
+                        FOREIGN KEY (user_id) REFERENCES users(id)
                     );`,
                     (err) => {
                         if (err) {
-                            console.error('Error creating taskList table:', err.message); // Any error is occur during creating a table
+                            console.error('Error creating tasks table:', err.message);
                         } else {
-                            console.log('taskList table created.'); // When table is successfully created
+                            console.log('tasks table created.');
                         }
                     }
                 );
             } else {
-                console.log('taskList table already exists.'); // If taskList table is doesn't exists
+                console.log('tasks table already exists.');
             }
         });
     });
@@ -94,7 +96,7 @@ const middlewareJwtToken = (req, res, next) => {
 app.post('/register', (req, res) => {
     const { username, email, password } = req.body;
 
-    db.get('SELECT * FROM userDetails WHERE email = ?', [email], async (err, user) => {
+    db.get('SELECT * FROM users WHERE email = ?', [email], async (err, user) => {
         if (err) {
             return res.status(500).json({ errorMsg: 'Database error' });
         }
@@ -105,7 +107,7 @@ app.post('/register', (req, res) => {
 
         const hashedPassword = await bcrypt.hash(password, 10);
         db.run(
-            'INSERT INTO userDetails (username, email, password) VALUES (?, ?, ?)',
+            'INSERT INTO users (username, email, password) VALUES (?, ?, ?)',
             [username, email, hashedPassword],
             function (err) {
                 if (err) {
@@ -121,7 +123,7 @@ app.post('/register', (req, res) => {
 app.post('/login', (req, res) => {
     const { email, password } = req.body;
 
-    db.get('SELECT * FROM userDetails WHERE email = ?', [email], async (err, user) => {
+    db.get('SELECT * FROM users WHERE email = ?', [email], async (err, user) => {
         if (err) {
             return res.status(500).json({ errorMsg: 'Database error' });
         }
@@ -142,16 +144,16 @@ app.post('/login', (req, res) => {
 
 // API-3: Create a task
 app.post('/tasks', middlewareJwtToken, (req, res) => {
-    const { task, status } = req.body;
+    const { title, description, status } = req.body;
 
-    db.get('SELECT id FROM userDetails WHERE email = ?', [req.email], (err, user) => {
+    db.get('SELECT id FROM users WHERE email = ?', [req.email], (err, user) => {
         if (err || !user) {
             return res.status(500).json({ errorMsg: 'Database error or user not found' });
         }
 
         db.run(
-            'INSERT INTO taskList (userId, task, status) VALUES (?, ?, ?)',
-            [user.id, task, status],
+            'INSERT INTO tasks (user_id, title, description, status) VALUES (?, ?, ?, ?)',
+            [user.id, title, description, status],
             function (err) {
                 if (err) {
                     return res.status(500).json({ errorMsg: 'Database error' });
@@ -165,14 +167,18 @@ app.post('/tasks', middlewareJwtToken, (req, res) => {
 // API-4: Update a task
 app.put('/tasks/:id', middlewareJwtToken, (req, res) => {
     const { id } = req.params;
-    const { task, status } = req.body;
+    const { title, description, status } = req.body;
 
     const updates = [];
     const params = [];
 
-    if (task) {
-        updates.push('task = ?');
-        params.push(task);
+    if (title) {
+        updates.push('title = ?');
+        params.push(title);
+    }
+    if (description) {
+        updates.push('description = ?');
+        params.push(description);
     }
     if (status) {
         updates.push('status = ?');
@@ -183,7 +189,7 @@ app.put('/tasks/:id', middlewareJwtToken, (req, res) => {
         return res.status(400).json({ errorMsg: 'No valid fields to update' });
     }
 
-    db.get('SELECT id FROM userDetails WHERE email = ?', [req.email], (err, user) => {
+    db.get('SELECT id FROM users WHERE email = ?', [req.email], (err, user) => {
         if (err || !user) {
             return res.status(500).json({ errorMsg: 'Database error or user not found' });
         }
@@ -191,7 +197,7 @@ app.put('/tasks/:id', middlewareJwtToken, (req, res) => {
         params.push(user.id, id);
 
         db.run(
-            `UPDATE taskList SET ${updates.join(', ')} WHERE userId = ? AND id = ?`,
+            `UPDATE tasks SET ${updates.join(', ')} WHERE user_id = ? AND id = ?`,
             params,
             function (err) {
                 if (err) {
@@ -212,13 +218,13 @@ app.put('/tasks/:id', middlewareJwtToken, (req, res) => {
 app.delete('/tasks/:id', middlewareJwtToken, (req, res) => {
     const { id } = req.params;
 
-    db.get('SELECT id FROM userDetails WHERE email = ?', [req.email], (err, user) => {
+    db.get('SELECT id FROM users WHERE email = ?', [req.email], (err, user) => {
         if (err || !user) {
             return res.status(500).json({ errorMsg: 'Database error or user not found' });
         }
 
         db.run(
-            'DELETE FROM taskList WHERE userId = ? AND id = ?',
+            'DELETE FROM tasks WHERE user_id = ? AND id = ?',
             [user.id, id],
             function (err) {
                 if (err) {
@@ -237,12 +243,12 @@ app.delete('/tasks/:id', middlewareJwtToken, (req, res) => {
 
 // API-6: Get tasks for User
 app.get('/tasks', middlewareJwtToken, (req, res) => {
-    db.get('SELECT id FROM userDetails WHERE email = ?', [req.email], (err, user) => {
+    db.get('SELECT id FROM users WHERE email = ?', [req.email], (err, user) => {
         if (err || !user) {
             return res.status(500).json({ errorMsg: 'Database error or user not found' });
         }
 
-        db.all('SELECT * FROM taskList WHERE userId = ?', [user.id], (err, tasks) => {
+        db.all('SELECT * FROM tasks WHERE user_id = ?', [user.id], (err, tasks) => {
             if (err) {
                 return res.status(500).json({ errorMsg: 'Database error' });
             }
@@ -253,7 +259,7 @@ app.get('/tasks', middlewareJwtToken, (req, res) => {
 
 // API-7: Get User Profile
 app.get('/profile', middlewareJwtToken, (req, res) => {
-    db.get('SELECT * FROM userDetails WHERE email = ?', [req.email], (err, user) => {
+    db.get('SELECT * FROM users WHERE email = ?', [req.email], (err, user) => {
         if (err) {
             return res.status(500).json({ errorMsg: 'Database error' });
         }
